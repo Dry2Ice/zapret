@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$PolicyJson,
-    [Parameter(Mandatory=$true)][string]$PolicyCache
+    [Parameter(Mandatory=$true)][string]$PolicyCache,
+    [Parameter(Mandatory=$true)][string]$BinPath,
+    [Parameter(Mandatory=$true)][string]$ListsPath
 )
 $ErrorActionPreference='Stop'
 
@@ -20,6 +22,12 @@ function Pick-FromPool {
 }
 
 $profiles = Get-Content -Raw -Path $PolicyJson | ConvertFrom-Json
+
+function Resolve-Tokens {
+    param([string]$Value)
+    if ($null -eq $Value) { return $null }
+    return $Value.Replace('%LISTS%', $ListsPath).Replace('%BIN%', $BinPath)
+}
 $cache = if (Test-Path $PolicyCache) { Get-Content -Raw -Path $PolicyCache | ConvertFrom-Json } else { [pscustomobject]@{ version=2; classes=@{}; session_seed=0 } }
 if (-not $cache.classes) { $cache | Add-Member -NotePropertyName classes -NotePropertyValue @{} -Force }
 if (-not $cache.session_seed -or [int]$cache.session_seed -le 0) { $cache.session_seed = Get-Random -Minimum 10000 -Maximum 2147483000 }
@@ -48,7 +56,7 @@ foreach($prop in $profiles.classes.PSObject.Properties){
         $state.fail_count=0
     }
 
-    $parts += $c.filters
+    $parts += @($c.filters | ForEach-Object { Resolve-Tokens -Value $_ })
     $seed = $cache.session_seed + $name.GetHashCode()
 
     switch([string]$state.active_strategy){
@@ -61,7 +69,8 @@ foreach($prop in $profiles.classes.PSObject.Properties){
             $seqovl = Pick-FromPool -Value $(if($c.splitSeqovlPool){$c.splitSeqovlPool}else{ if($c.splitSeqovl){$c.splitSeqovl}else{568}}) -Seed ($seed+7)
             $parts += '--dpi-desync-split-pos=' + $splitPos
             $parts += '--dpi-desync-split-seqovl=' + $seqovl
-            if($c.splitPattern){$parts += '--dpi-desync-split-seqovl-pattern="' + $c.splitPattern + '"'}
+            $splitPattern = Resolve-Tokens -Value $c.splitPattern
+            if($splitPattern){$parts += '--dpi-desync-split-seqovl-pattern="' + $splitPattern + '"'}
             # TCP fragmentation jitter: add alternate segmentation points when provided
             if($c.fragmentJitterPool){
                 $j = Pick-FromPool -Value $c.fragmentJitterPool -Seed ($seed+11)
@@ -73,6 +82,10 @@ foreach($prop in $profiles.classes.PSObject.Properties){
     # session/host deterministic fake payload selection
     $fakeQuic = Pick-FromPool -Value $c.fakeQuicPool -Seed ($seed+17); if(-not $fakeQuic){$fakeQuic=$c.fakeQuic}
     $fakeUnknownUdp = Pick-FromPool -Value $c.fakeUnknownUdpPool -Seed ($seed+19); if(-not $fakeUnknownUdp){$fakeUnknownUdp=$c.fakeUnknownUdp}
+    $fakeQuic = Resolve-Tokens -Value $fakeQuic
+    $fakeDiscord = Resolve-Tokens -Value $c.fakeDiscord
+    $fakeStun = Resolve-Tokens -Value $c.fakeStun
+    $fakeUnknownUdp = Resolve-Tokens -Value $fakeUnknownUdp
 
     # UDP/QUIC probabilistic fake injection with rate cap
     $injectChance = if($c.probabilisticFakeRate){[int]$c.probabilisticFakeRate}else{100}
@@ -80,8 +93,8 @@ foreach($prop in $profiles.classes.PSObject.Properties){
     $allowFake = $roll -lt $injectChance
 
     if($allowFake -and $fakeQuic -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-fake-quic="' + $fakeQuic + '"' }
-    if($allowFake -and $c.fakeDiscord -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-fake-discord="' + $c.fakeDiscord + '"' }
-    if($allowFake -and $c.fakeStun -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-fake-stun="' + $c.fakeStun + '"' }
+    if($allowFake -and $fakeDiscord -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-fake-discord="' + $fakeDiscord + '"' }
+    if($allowFake -and $fakeStun -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-fake-stun="' + $fakeStun + '"' }
     if($allowFake -and $fakeUnknownUdp -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-fake-unknown-udp="' + $fakeUnknownUdp + '"' }
 
     # Adaptive TTL with path viability guardrail
