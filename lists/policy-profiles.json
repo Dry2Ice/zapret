@@ -8,12 +8,36 @@
   },
   "classes": {
     "cdn_https": {
-      "filters": ["--filter-tcp=80,443", "--hostlist=\"%LISTS%list-general.txt\"", "--hostlist=\"%LISTS%list-general-user.txt\"", "--hostlist-exclude=\"%LISTS%list-exclude.txt\"", "--hostlist-exclude=\"%LISTS%list-exclude-user.txt\"", "--ipset-exclude=\"%LISTS%ipset-exclude.txt\"", "--ipset-exclude=\"%LISTS%ipset-exclude-user.txt\""]
+      "filters": [
+        "--filter-tcp=80,443",
+        "--hostlist=\"__LISTS__list-general.txt\"",
+        "--hostlist=\"__LISTS__list-general-user.txt\"",
+        "--hostlist-exclude=\"__LISTS__list-exclude.txt\"",
+        "--hostlist-exclude=\"__LISTS__list-exclude-user.txt\"",
+        "--ipset-exclude=\"__LISTS__ipset-exclude.txt\"",
+        "--ipset-exclude=\"__LISTS__ipset-exclude-user.txt\""
+      ],
+      "strategy": "multisplit",
+      "splitPosPool": [
+        1,
+        "midsld"
+      ],
+      "splitSeqovlPool": [
+        568,
+        664
+      ],
+      "splitPattern": "__BIN__tls_clienthello_4pda_to.bin"
     },
     "google_quic": {
-      "filters": ["--filter-udp=443", "--hostlist=\"%LISTS%list-google.txt\""],
+      "filters": [
+        "--filter-udp=443",
+        "--hostlist=\"__LISTS__list-google.txt\""
+      ],
       "strategy": "fake(2)",
-      "fakeQuicPool": ["%BIN%quic_initial_www_google_com.bin", "%BIN%quic_initial_dbankcloud_ru.bin"],
+      "fakeQuicPool": [
+        "__BIN__quic_initial_www_google_com.bin",
+        "__BIN__quic_initial_dbankcloud_ru.bin"
+      ],
       "probabilisticFakeRate": 65,
       "ttlAdaptive": true,
       "ttlViable": true,
@@ -21,29 +45,67 @@
       "ttlMax": 4
     },
     "discord_udp": {
-      "filters": ["--filter-udp=19294-19344,50000-50100", "--filter-l7=discord,stun"],
+      "filters": [
+        "--filter-udp=19294-19344,50000-50100",
+        "--filter-l7=discord,stun"
+      ],
       "strategy": "fake(2)",
-      "fakeDiscord": "%BIN%quic_initial_dbankcloud_ru.bin",
-      "fakeStun": "%BIN%quic_initial_dbankcloud_ru.bin",
-      "repeatsPool": [2, 4, 6],
+      "fakeDiscord": "__BIN__quic_initial_dbankcloud_ru.bin",
+      "fakeStun": "__BIN__quic_initial_dbankcloud_ru.bin",
+      "repeatsPool": [
+        2,
+        4,
+        6
+      ],
       "probabilisticFakeRate": 75
     },
     "discord_media_https": {
-      "filters": ["--filter-tcp=2053,2083,2087,2096,8443", "--hostlist-domains=discord.media"],
+      "filters": [
+        "--filter-tcp=2053,2083,2087,2096,8443",
+        "--hostlist-domains=discord.media"
+      ],
       "strategy": "multisplit",
-      "splitPosPool": [1, "2,sniext+1", "midsld"],
-      "splitSeqovlPool": [652, 664, 681],
-      "fragmentJitterPool": ["1", "2", "sniext+1"],
-      "splitPattern": "%BIN%tls_clienthello_www_google_com.bin"
+      "splitPosPool": [
+        1,
+        "2,sniext+1",
+        "midsld"
+      ],
+      "splitSeqovlPool": [
+        652,
+        664,
+        681
+      ],
+      "fragmentJitterPool": [
+        "1",
+        "2",
+        "sniext+1"
+      ],
+      "splitPattern": "__BIN__tls_clienthello_www_google_com.bin"
     },
     "game_udp_highport": {
-      "filters": ["--filter-udp=%GameFilterUDP%", "--ipset=\"%LISTS%ipset-all.txt\"", "--ipset-exclude=\"%LISTS%ipset-exclude.txt\"", "--ipset-exclude=\"%LISTS%ipset-exclude-user.txt\""],
+      "filters": [
+        "--filter-udp=%GameFilterUDP%",
+        "--ipset=\"__LISTS__ipset-all.txt\"",
+        "--ipset-exclude=\"__LISTS__ipset-exclude.txt\"",
+        "--ipset-exclude=\"__LISTS__ipset-exclude-user.txt\""
+      ],
       "strategy": "fake(6)",
-      "repeatsPool": [4, 6, 8],
+      "repeatsPool": [
+        4,
+        6,
+        8
+      ],
       "anyProtocol": 1,
       "cutoff": "n2",
-      "fakeUnknownUdpPool": ["%BIN%quic_initial_dbankcloud_ru.bin", "%BIN%quic_initial_www_google_com.bin"],
+      "fakeUnknownUdpPool": [
+        "__BIN__quic_initial_dbankcloud_ru.bin",
+        "__BIN__quic_initial_www_google_com.bin"
+      ],
       "probabilisticFakeRate": 50
     }
+  },
+  "pathTokens": {
+    "__LISTS__": "TODO(build-policy-args.ps1): replace token with $listsPath via .Replace(\"__LISTS__\", $listsPath)",
+    "__BIN__": "TODO(build-policy-args.ps1): replace token with $binPath via .Replace(\"__BIN__\", $binPath)"
   }
 }
