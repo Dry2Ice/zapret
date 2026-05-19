@@ -567,6 +567,12 @@ if !errorlevel!==0 (
 )
 echo:
 
+call :PrintYellow "[DIAG] DNS path issue status: check below"
+call :PrintYellow "[DIAG] TLS handshake anomaly status: check below"
+call :PrintYellow "[DIAG] UDP impairment status: check below"
+call :PrintYellow "[DIAG] probable DPI false positive status: check via Run Tests diff report"
+echo:
+
 :: DNS
 set "dohfound=0"
 for /f "delims=" %%a in ('powershell -NoProfile -Command "Get-ChildItem -Recurse -Path 'HKLM:System\CurrentControlSet\Services\Dnscache\InterfaceSpecificParameters\' | Get-ItemProperty | Where-Object { $_.DohFlags -gt 0 } | Measure-Object | Select-Object -ExpandProperty Count"') do (
@@ -580,6 +586,7 @@ if !dohfound!==0 (
 ) else (
     call :PrintGreen "Secure DNS check passed"
 )
+if !dohfound!==0 (call :PrintRed "[DIAG] DNS path issue: detected (secure DNS not configured)") else (call :PrintGreen "[DIAG] DNS path issue: clear")
 echo:
 
 :: Hosts file check
@@ -593,6 +600,24 @@ if exist "%hostsFile%" (
     )
 )
 
+
+:: TLS handshake anomaly quick check
+curl.exe -I -s -m 5 --tlsv1.2 --tls-max 1.2 https://discord.com -o NUL >nul 2>&1
+if !errorlevel! neq 0 (
+    call :PrintYellow "[DIAG] TLS handshake anomaly: detected (handshake probe failed)"
+) else (
+    call :PrintGreen "[DIAG] TLS handshake anomaly: clear"
+)
+echo:
+
+:: UDP impairment quick check (DNS ping)
+ping -n 1 1.1.1.1 >nul 2>&1
+if !errorlevel! neq 0 (
+    call :PrintYellow "[DIAG] UDP impairment: detected (ICMP probe failed)"
+) else (
+    call :PrintGreen "[DIAG] UDP impairment: clear"
+)
+echo:
 :: WinDivert conflict
 tasklist /FI "IMAGENAME eq winws.exe" | find /I "winws.exe" > nul
 set "winws_running=!errorlevel!"
