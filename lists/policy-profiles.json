@@ -1,6 +1,11 @@
 {
-  "version": 1,
+  "version": 2,
   "failureThreshold": 3,
+  "guardrails": {
+    "maxRetries": 10,
+    "maxByteOverhead": 3500,
+    "qoeFloor": 0.85
+  },
   "classes": {
     "cdn_https": {
       "filters": ["--filter-tcp=80,443", "--hostlist=\"%LISTS%list-general.txt\"", "--hostlist=\"%LISTS%list-general-user.txt\"", "--hostlist-exclude=\"%LISTS%list-exclude.txt\"", "--hostlist-exclude=\"%LISTS%list-exclude-user.txt\"", "--ipset-exclude=\"%LISTS%ipset-exclude.txt\"", "--ipset-exclude=\"%LISTS%ipset-exclude-user.txt\""]
@@ -8,27 +13,37 @@
     "google_quic": {
       "filters": ["--filter-udp=443", "--hostlist=\"%LISTS%list-google.txt\""],
       "strategy": "fake(2)",
-      "fakeQuic": "%BIN%quic_initial_www_google_com.bin"
+      "fakeQuicPool": ["%BIN%quic_initial_www_google_com.bin", "%BIN%quic_initial_dbankcloud_ru.bin"],
+      "probabilisticFakeRate": 65,
+      "ttlAdaptive": true,
+      "ttlViable": true,
+      "ttlMin": 2,
+      "ttlMax": 4
     },
     "discord_udp": {
       "filters": ["--filter-udp=19294-19344,50000-50100", "--filter-l7=discord,stun"],
       "strategy": "fake(2)",
       "fakeDiscord": "%BIN%quic_initial_dbankcloud_ru.bin",
-      "fakeStun": "%BIN%quic_initial_dbankcloud_ru.bin"
+      "fakeStun": "%BIN%quic_initial_dbankcloud_ru.bin",
+      "repeatsPool": [2, 4, 6],
+      "probabilisticFakeRate": 75
     },
     "discord_media_https": {
       "filters": ["--filter-tcp=2053,2083,2087,2096,8443", "--hostlist-domains=discord.media"],
       "strategy": "multisplit",
-      "splitSeqovl": 681,
-      "splitPos": 1,
+      "splitPosPool": [1, "2,sniext+1", "midsld"],
+      "splitSeqovlPool": [652, 664, 681],
+      "fragmentJitterPool": ["1", "2", "sniext+1"],
       "splitPattern": "%BIN%tls_clienthello_www_google_com.bin"
     },
     "game_udp_highport": {
       "filters": ["--filter-udp=%GameFilterUDP%", "--ipset=\"%LISTS%ipset-all.txt\"", "--ipset-exclude=\"%LISTS%ipset-exclude.txt\"", "--ipset-exclude=\"%LISTS%ipset-exclude-user.txt\""],
       "strategy": "fake(6)",
+      "repeatsPool": [4, 6, 8],
       "anyProtocol": 1,
       "cutoff": "n2",
-      "fakeUnknownUdp": "%BIN%quic_initial_dbankcloud_ru.bin"
+      "fakeUnknownUdpPool": ["%BIN%quic_initial_dbankcloud_ru.bin", "%BIN%quic_initial_www_google_com.bin"],
+      "probabilisticFakeRate": 50
     }
   }
 }
