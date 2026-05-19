@@ -63,12 +63,11 @@ for /f "usebackq delims=" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass
 set "POLICY_BUILD_ERROR="
 if not defined POLICY_ARGS set "POLICY_BUILD_ERROR=1"
 if "%POLICY_ARGS%"=="""" set "POLICY_BUILD_ERROR=1"
+if not defined POLICY_BUILD_ERROR (
+    echo(%POLICY_ARGS%| findstr /R "[^ ]" >nul || set "POLICY_BUILD_ERROR=1"
+)
 echo %POLICY_ARGS% | findstr /I /C:"--wf-tcp" >nul && set "POLICY_BUILD_ERROR=1"
 echo %POLICY_ARGS% | findstr /I /C:"--wf-udp" >nul && set "POLICY_BUILD_ERROR=1"
-echo %POLICY_ARGS% | findstr /I /C:"--filter-tcp=80,443" >nul && set "POLICY_BUILD_ERROR=1"
-echo %POLICY_ARGS% | findstr /I /C:"--hostlist=" >nul && set "POLICY_BUILD_ERROR=1"
-echo %POLICY_ARGS% | findstr /I /C:"--hostlist-exclude=" >nul && set "POLICY_BUILD_ERROR=1"
-echo %POLICY_ARGS% | findstr /I /C:"--ipset-exclude=" >nul && set "POLICY_BUILD_ERROR=1"
 
 if defined POLICY_BUILD_ERROR (
     > "%POLICY_LOG%" (
