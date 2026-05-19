@@ -94,4 +94,22 @@ function Select-BanditStrategy {
     return $sampled | Sort-Object bandit_score -Descending | Select-Object -First 1
 }
 
-Export-ModuleMember -Function Get-StrategyFeatures,Get-MultiObjectiveScore,Get-SuccessiveHalvingPlan,Select-BanditStrategy
+function Get-ProtocolClass {
+    param([string]$TargetKey)
+    if ($TargetKey -match '^\d{1,3}(\.\d{1,3}){3}(/\d{1,2})?$') { return 'raw-ip' }
+    if ($TargetKey -match 'youtube|googlevideo|ytimg') { return 'streaming' }
+    if ($TargetKey -match 'discord|gateway') { return 'voip' }
+    return 'web'
+}
+
+function Get-RttTrend {
+    param([array]$History)
+    if (-not $History -or $History.Count -lt 2) { return 'unknown' }
+    $first = [double]$History[0]
+    $last = [double]$History[$History.Count - 1]
+    if ($last -lt ($first - 5)) { return 'improving' }
+    if ($last -gt ($first + 5)) { return 'degrading' }
+    return 'stable'
+}
+
+Export-ModuleMember -Function Get-StrategyFeatures,Get-MultiObjectiveScore,Get-SuccessiveHalvingPlan,Select-BanditStrategy,Get-ProtocolClass,Get-RttTrend

@@ -85,12 +85,14 @@ call :ipset_switch_status
 call :game_switch_status
 call :check_updates_switch_status
 call :get_strategy_name
+call :get_reason_codes
 
 set "menu_choice=null"
 
 echo.
 echo   ZAPRET SERVICE MANAGER v!LOCAL_VERSION!
 echo.  !CurrentStrategy!
+if defined ReasonCodes echo.  Reason-codes: !ReasonCodes!
 echo   ----------------------------------------
 echo.
 echo   :: SERVICE
@@ -1069,6 +1071,16 @@ goto menu
 :get_strategy_name
 set "CurrentStrategy="
 for /f "tokens=2*" %%A in ('reg query "HKLM\System\CurrentControlSet\Services\zapret" /v zapret-discord-youtube 2^>nul') do set "CurrentStrategy=Strategy: %%B"
+exit /b
+
+:get_reason_codes
+set "ReasonCodes="
+set "reasonFile=%~dp0utils\runtime-selection-reasons.txt"
+if exist "%reasonFile%" (
+    for /f "tokens=1,* delims==" %%A in (%reasonFile%) do (
+        if /i "%%A"=="reason_codes" set "ReasonCodes=%%B"
+    )
+)
 exit /b
 
 
