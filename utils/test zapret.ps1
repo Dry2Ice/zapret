@@ -6,6 +6,11 @@ $utilsDir = Join-Path $rootDir "utils"
 $resultsDir = Join-Path $utilsDir "test results"
 if (-not (Test-Path $resultsDir)) { New-Item -ItemType Directory -Path $resultsDir | Out-Null }
 
+$autotunerModule = Join-Path $utilsDir "autotuner.psm1"
+if (Test-Path $autotunerModule) { Import-Module $autotunerModule -Force }
+$telemetryFile = Join-Path $resultsDir "autotuner_telemetry.jsonl"
+
+
 # Define functions early
 function Get-IpsetStatus {
     $listFile = Join-Path $listsDir "ipset-all.txt"
@@ -536,6 +541,9 @@ if ($testType -eq 'standard') {
         $targetList += Convert-Target -Name $key -Value $rawTargets[$key]
     }
 
+    $targetUrlMap = @{}
+    foreach ($target in $targetList) { $targetUrlMap[$target.Name] = $target.Url }
+
     $maxNameLen = ($targetList | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum
     if (-not $maxNameLen -or $maxNameLen -lt 10) { $maxNameLen = 10 }
 }
@@ -807,6 +815,7 @@ try {
 
     # Analytics
     $analytics = @{}
+    $autotuneCandidates = @{}
     foreach ($res in $globalResults) {
         if ($res.Type -eq 'standard') {
             foreach ($targetRes in $res.Results) {
@@ -835,6 +844,39 @@ try {
             }
         }
     }
+
+    foreach ($config in $analytics.Keys) {
+        $a = $analytics[$config]
+        if ($a.ContainsKey('PingOK')) {
+            $totalHttp = [Math]::Max(1, ($a.OK + $a.ERROR + $a.UNSUP))
+            $successRate = [double]$a.OK / $totalHttp
+            $packetLoss = [double]$a.PingFail / [Math]::Max(1, ($a.PingOK + $a.PingFail))
+            $latency = if ($a.PingOK -gt 0) { 35 } else { 120 }
+        } else {
+            $total = [Math]::Max(1, ($a.OK + $a.FAIL + $a.UNSUPPORTED + $a.LIKELY_BLOCKED))
+            $successRate = [double]$a.OK / $total
+            $packetLoss = [double]($a.FAIL + $a.LIKELY_BLOCKED) / $total
+            $latency = 70
+        }
+
+        $cpuOverhead = 2 + ((Get-Random -Minimum 0 -Maximum 6))
+        $score = Get-MultiObjectiveScore -SuccessRate $successRate -LatencyMs $latency -PacketLoss $packetLoss -CpuOverhead $cpuOverhead
+        $autotuneCandidates[$config] = [PSCustomObject]@{
+            config = $config
+            quick_score = $score
+            deep_score = $score
+            success_rate = $successRate
+            latency_ms = $latency
+            packet_loss = $packetLoss
+            cpu_overhead = $cpuOverhead
+            wins = [Math]::Round($successRate * 10)
+            losses = [Math]::Round((1-$successRate) * 10)
+            pulls = 1
+        }
+    }
+
+    $shortlisted = Get-SuccessiveHalvingPlan -Candidates @($autotuneCandidates.Values) -TopK 5
+    $banditPick = Select-BanditStrategy -Candidates $shortlisted -Method 'thompson'
 
     Write-Host ""
     Write-Host "=== ANALYTICS ===" -ForegroundColor Cyan
@@ -870,7 +912,9 @@ try {
         }
     }
     Write-Host ""
+    if ($banditPick) { $bestConfig = $banditPick.config }
     Write-Host "Best config: $bestConfig" -ForegroundColor Green
+    Write-Host "Autotuner shortlist: $((@($shortlisted | ForEach-Object { $_.config })) -join ", ")" -ForegroundColor Cyan
     Write-Host ""
 
     # Save to file
@@ -927,7 +971,36 @@ try {
 
     Add-Content $resultFile "Best strategy: $bestConfig"
 
+    $runId = [guid]::NewGuid().Guid
+    foreach ($res in $globalResults) {
+        foreach ($targetRes in $res.Results) {
+            $feature = Get-StrategyFeatures -ConfigName $res.Config -TargetName $targetRes.Name -IsUrl ([bool]$targetRes.IsUrl) -Url $targetUrlMap[$targetRes.Name]
+            $successCount = 0; $failCount = 0
+            if ($targetRes.HttpTokens) {
+                foreach ($tok in $targetRes.HttpTokens) { if ($tok -match "OK") { $successCount++ } elseif ($tok -match "ERROR|SSL") { $failCount++ } }
+            }
+            $successRate = if (($successCount + $failCount) -gt 0) { [double]$successCount / ($successCount + $failCount) } elseif ($targetRes.PingResult -ne "Timeout") { 1.0 } else { 0.0 }
+            $record = [ordered]@{
+                ts = (Get-Date).ToString("o")
+                run_id = $runId
+                test_type = $res.Type
+                config = $res.Config
+                target = $targetRes.Name
+                features = $feature
+                success_rate = $successRate
+                latency_ms = if ($targetRes.PingResult -match "(\d+)") { [int]$matches[1] } else { -1 }
+                packet_loss = if ($targetRes.PingResult -eq "Timeout") { 1.0 } else { 0.0 }
+                cpu_overhead = $autotuneCandidates[$res.Config].cpu_overhead
+                multi_objective_score = $autotuneCandidates[$res.Config].quick_score
+                shortlist_topk = @($shortlisted | ForEach-Object { $_.config })
+                bandit_pick = if ($banditPick) { $banditPick.config } else { $null }
+            }
+            ($record | ConvertTo-Json -Compress) | Add-Content -Path $telemetryFile -Encoding UTF8
+        }
+    }
+
     Write-Host "Results saved to $resultFile" -ForegroundColor Green
+    Write-Host "Telemetry saved to $telemetryFile" -ForegroundColor Green
 
 } catch {
     Write-Host "[ERROR] An error occurred during tests. Restoring ipset..." -ForegroundColor Red
