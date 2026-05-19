@@ -38,8 +38,6 @@ riotcdn.net
 leagueoflegends.com
 playvalorant.com
 marketplace.visualstudio.com
-gallery.vsassets.io
-gallerycdn.vsassets.io
 gosuslugi.ru
 gov.ru
 nalog.ru
@@ -91,3 +89,5 @@ tbank.ru
 tochka-tech.com
 tochka.com
 vtb.ru
+chat.deepseek.com
+deepseek.com

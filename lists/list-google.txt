@@ -16,3 +16,10 @@ yt-video-upload.l.google.com
 ytimg.com
 ytimg.l.google.com
 play.google.com
+gstatic.com
+googleusercontent.com
+storage.googleapis.com
+lh3.googleusercontent.com
+lh4.googleusercontent.com
+lh5.googleusercontent.com
+lh6.googleusercontent.com
