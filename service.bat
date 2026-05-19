@@ -58,7 +58,7 @@ if not exist "%POLICY_CACHE%" (
     > "%POLICY_CACHE%" echo {"version":1,"classes":{}}
 )
 
-for /f "usebackq delims=" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0utils\build-policy-args.ps1" -PolicyJson "%POLICY_JSON%" -PolicyCache "%POLICY_CACHE%"`) do set "POLICY_ARGS=%%A"
+for /f "usebackq delims=" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0utils\build-policy-args.ps1" -PolicyJson "%POLICY_JSON%" -PolicyCache "%POLICY_CACHE%" -BinPath "%BIN%" -ListsPath "%LISTS%"`) do set "POLICY_ARGS=%%A"
 
 set "POLICY_BUILD_ERROR="
 if not defined POLICY_ARGS set "POLICY_BUILD_ERROR=1"
