@@ -39,6 +39,13 @@ if "%~1"=="build_policy_args" (
     exit /b
 )
 
+if "%~1"=="load_user_lists" (
+    call :load_user_lists
+    exit /b
+)
+
+goto main
+
 :: BUILD POLICY ARGS ==================
 :build_policy_args
 setlocal DisableDelayedExpansion
@@ -53,11 +60,8 @@ for /f "usebackq delims=" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass
 
 endlocal & set "POLICY_ARGS=%POLICY_ARGS%"
 exit /b
-if "%~1"=="load_user_lists" (
-    call :load_user_lists
-    exit /b
-)
 
+:main
 if "%1"=="admin" (
     call :check_command chcp
     call :check_command find
