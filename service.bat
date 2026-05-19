@@ -916,7 +916,7 @@ set "listFile=%~dp0lists\ipset-all.txt"
 for /f %%i in ('type "%listFile%" 2^>nul ^| find /c /v ""') do set "lineCount=%%i"
 
 if !lineCount!==0 (
-    set "IPsetStatus=any"
+    set "IPsetStatus=any (danger)"
 ) else (
     findstr /R "^203\.0\.113\.113/32$" "%listFile%" >nul
     if !errorlevel!==0 (
@@ -950,13 +950,29 @@ if "%IPsetStatus%"=="loaded" (
     )
     
 ) else if "%IPsetStatus%"=="none" (
+    echo [WARNING] You are about to switch IPSet Filter from "none" to "any".
+    echo [WARNING] This can break access to many websites.
+    set "confirmAny="
+    set /p "confirmAny=Type YES to continue: "
+    if /i not "!confirmAny!"=="YES" (
+        echo Cancelled.
+        pause
+        goto menu
+    )
+    set "confirmAnySecond="
+    set /p "confirmAnySecond=Type YES AGAIN to confirm dangerous mode: "
+    if /i not "!confirmAnySecond!"=="YES" (
+        echo Cancelled.
+        pause
+        goto menu
+    )
     echo Switching to any mode...
     
     >"%listFile%" (
         rem Creating empty file
     )
     
-) else if "%IPsetStatus%"=="any" (
+) else if "%IPsetStatus%"=="any (danger)" (
     echo Switching to loaded mode...
     
     if exist "%backupFile%" (
