@@ -49,7 +49,12 @@ start "zapret: %~n0" /min "%BIN%winws.exe" --wf-tcp=80,443,2053,2083,2087,2096,8
 if exist "%PolicyLayerEnabledFile%" (
     call service.bat build_policy_args
     if defined POLICY_ARGS (
-        start "zapret: policy" /min "%BIN%winws.exe" --wf-tcp=80,443,2053,2083,2087,2096,8443,%GameFilterTCP% --wf-udp=443,19294-19344,50000-50100,%GameFilterUDP% %POLICY_ARGS%
+        echo %POLICY_ARGS% | findstr /I /C:"--wf-tcp" /C:"--wf-udp" >nul
+        if errorlevel 1 (
+            start "zapret: policy" /min "%BIN%winws.exe" %POLICY_ARGS%
+        ) else (
+            echo [policy-layer] POLICY_ARGS contains --wf-tcp/--wf-udp, policy process skipped. See utils\policy-last.log
+        )
     ) else (
         echo [policy-layer] POLICY_ARGS invalid or empty, policy process skipped. See utils\policy-last.log
     )

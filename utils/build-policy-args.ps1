@@ -26,7 +26,7 @@ $profiles = Get-Content -Raw -Path $PolicyJson | ConvertFrom-Json
 function Resolve-Tokens {
     param([string]$Value)
     if ($null -eq $Value) { return $null }
-    return $Value.Replace('%LISTS%', $ListsPath).Replace('%BIN%', $BinPath)
+    return $Value.Replace('__LISTS__', $ListsPath).Replace('__BIN__', $BinPath)
 }
 $cache = if (Test-Path $PolicyCache) { Get-Content -Raw -Path $PolicyCache | ConvertFrom-Json } else { [pscustomobject]@{ version=2; classes=@{}; session_seed=0 } }
 if (-not $cache.classes) { $cache | Add-Member -NotePropertyName classes -NotePropertyValue @{} -Force }
@@ -34,6 +34,7 @@ if (-not $cache.session_seed -or [int]$cache.session_seed -le 0) { $cache.sessio
 
 $ladder=@('none','fake(2)','fake(6)','multisplit')
 $threshold=[int]$profiles.failureThreshold
+$stableMinutes = if($profiles.stableMinutes){[int]$profiles.stableMinutes}else{15}
 $globalMaxRetries = if($profiles.guardrails.maxRetries){[int]$profiles.guardrails.maxRetries}else{12}
 $globalMaxOverhead = if($profiles.guardrails.maxByteOverhead){[int]$profiles.guardrails.maxByteOverhead}else{4096}
 $globalQoEFloor = if($profiles.guardrails.qoeFloor){[double]$profiles.guardrails.qoeFloor}else{0.85}
@@ -42,10 +43,31 @@ $parts=@()
 foreach($prop in $profiles.classes.PSObject.Properties){
     $name=$prop.Name; $c=$prop.Value
     if(-not ($cache.classes.PSObject.Properties.Name -contains $name)){
-        $cache.classes | Add-Member -NotePropertyName $name -NotePropertyValue ([pscustomobject]@{ fail_count=0; success_level=''; active_strategy=''; degradation_score=1.0 })
+        $cache.classes | Add-Member -NotePropertyName $name -NotePropertyValue ([pscustomobject]@{ fail_count=0; success_level=''; active_strategy=''; degradation_score=1.0; last_started_at_utc=''; last_uptime_minutes=0 })
     }
     $state=$cache.classes.$name
+    if(-not ($state.PSObject.Properties.Name -contains 'last_started_at_utc')){ $state | Add-Member -NotePropertyName last_started_at_utc -NotePropertyValue '' -Force }
+    if(-not ($state.PSObject.Properties.Name -contains 'last_uptime_minutes')){ $state | Add-Member -NotePropertyName last_uptime_minutes -NotePropertyValue 0 -Force }
     $state.active_strategy = if($state.active_strategy){$state.active_strategy}else{ if($c.strategy){$c.strategy}else{'none'} }
+
+    # Restart-based fail_count stub:
+    # if previous session restarted before stable TTL, treat it like a crash and increment fail_count
+    $nowUtc = [DateTime]::UtcNow
+    if($state.last_started_at_utc){
+        try {
+            $prevStart = [DateTime]::Parse($state.last_started_at_utc)
+            $uptimeMinutes = [Math]::Floor(($nowUtc - $prevStart).TotalMinutes)
+            if($uptimeMinutes -lt 0){ $uptimeMinutes = 0 }
+            $state.last_uptime_minutes = $uptimeMinutes
+            if($uptimeMinutes -lt $stableMinutes){
+                $state.fail_count = [int]$state.fail_count + 1
+            } else {
+                $state.fail_count = 0
+            }
+        } catch {
+            $state.last_uptime_minutes = 0
+        }
+    }
 
     # Guardrails + rollback
     $curRepeats = [int](Pick-FromPool -Value $(if($c.repeatsPool){$c.repeatsPool}else{ if($c.repeats){$c.repeats}else{6}}) -Seed ($cache.session_seed + $name.GetHashCode()))
@@ -110,6 +132,7 @@ foreach($prop in $profiles.classes.PSObject.Properties){
     if($c.cutoff -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-cutoff=' + $c.cutoff }
     $parts += '--new'
     $state.success_level = $state.active_strategy
+    $state.last_started_at_utc = $nowUtc.ToString('o')
 }
 
 $json = $cache | ConvertTo-Json -Depth 10
