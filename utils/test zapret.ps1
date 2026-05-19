@@ -9,6 +9,13 @@ if (-not (Test-Path $resultsDir)) { New-Item -ItemType Directory -Path $resultsD
 $autotunerModule = Join-Path $utilsDir "autotuner.psm1"
 if (Test-Path $autotunerModule) { Import-Module $autotunerModule -Force }
 $telemetryFile = Join-Path $resultsDir "autotuner_telemetry.jsonl"
+$stateTableFile = Join-Path $utilsDir "destination-state-table.json"
+$reasonCodeFile = Join-Path $utilsDir "runtime-selection-reasons.txt"
+$ipsetStageDir = Join-Path $listsDir "ipset-stage"
+$ipsetCandidateFile = Join-Path $ipsetStageDir "candidate.txt"
+$ipsetProbationFile = Join-Path $ipsetStageDir "probation.txt"
+$ipsetStableFile = Join-Path $ipsetStageDir "stable.txt"
+$ipsetExcludeFile = Join-Path $listsDir "ipset-exclude-user.txt"
 $degradationFile = Join-Path $utilsDir "degradation-thresholds.conf"
 $realtimeSafeFlag = Join-Path $utilsDir "realtime_safe.enabled"
 
@@ -71,6 +78,33 @@ function Get-DegradationThresholds {
 function Add-OrSet {
     param($dict, $key, $val)
     if ($dict.Contains($key)) { $dict[$key] = $val } else { $dict.Add($key, $val) }
+}
+function Load-StateTable {
+    if (-not (Test-Path $stateTableFile)) { return @{} }
+    try {
+        $raw = Get-Content $stateTableFile -Raw | ConvertFrom-Json -AsHashtable
+        if (-not $raw) { return @{} }
+        return $raw
+    } catch { return @{} }
+}
+function Save-StateTable { param([hashtable]$Table) ($Table | ConvertTo-Json -Depth 8) | Out-File $stateTableFile -Encoding UTF8 }
+function Ensure-IpsetStageFiles {
+    if (-not (Test-Path $ipsetStageDir)) { New-Item -ItemType Directory -Path $ipsetStageDir | Out-Null }
+    foreach ($f in @($ipsetCandidateFile,$ipsetProbationFile,$ipsetStableFile)) { if (-not (Test-Path $f)) { "" | Out-File $f -Encoding UTF8 } }
+}
+function Update-StagedIpset {
+    param([string]$Host,[double]$SuccessRate)
+    Ensure-IpsetStageFiles
+    $c = @(Get-Content $ipsetCandidateFile -ErrorAction SilentlyContinue | Where-Object { $_ -and $_ -ne $Host })
+    $p = @(Get-Content $ipsetProbationFile -ErrorAction SilentlyContinue | Where-Object { $_ -and $_ -ne $Host })
+    $s = @(Get-Content $ipsetStableFile -ErrorAction SilentlyContinue | Where-Object { $_ -and $_ -ne $Host })
+    if ($SuccessRate -ge 0.9) { $s += $Host }
+    elseif ($SuccessRate -ge 0.5) { $p += $Host }
+    else { $c += $Host }
+    $c | Set-Content $ipsetCandidateFile
+    $p | Set-Content $ipsetProbationFile
+    $s | Set-Content $ipsetStableFile
+    ($s | Sort-Object -Unique) | Set-Content (Join-Path $listsDir "ipset-all.txt")
 }
 
 # Convert raw target value to structured target (supports PING:ip for ping-only targets)
@@ -905,6 +939,8 @@ try {
         }
     }
 
+    $stateTable = Load-StateTable
+    $reasonCodes = @()
     # Determine best strategy
     $bestConfig = $null
     $maxScore = 0
@@ -928,7 +964,7 @@ try {
         }
     }
     Write-Host ""
-    if ($banditPick) { $bestConfig = $banditPick.config }
+    if ($banditPick) { $bestConfig = $banditPick.config; $reasonCodes += "BANDIT_PICK_TOP_SHORTLIST" }
     Write-Host "Best config: $bestConfig" -ForegroundColor Green
     Write-Host "Autotuner shortlist: $((@($shortlisted | ForEach-Object { $_.config })) -join ", ")" -ForegroundColor Cyan
     Write-Host ""
@@ -1017,6 +1053,7 @@ try {
     }
 
     Add-Content $resultFile "Best strategy: $bestConfig"
+    Add-Content $resultFile "Reason codes: $($reasonCodes -join ';')"
     Add-Content $resultFile "Overload monitor: jitter=${jitter}ms; timeout_ratio=$timeoutRatio; failed_probes=$failedProbes"
     Add-Content $resultFile "Thresholds: jitter<=$($thresholds.MAX_JITTER_MS), timeout_ratio<=$($thresholds.MAX_TIMEOUT_RATIO), failed_probes<=$($thresholds.MAX_FAILED_PROBES)"
     if ($overloadDetected) {
@@ -1034,6 +1071,40 @@ try {
                 foreach ($tok in $targetRes.HttpTokens) { if ($tok -match "OK") { $successCount++ } elseif ($tok -match "ERROR|SSL") { $failCount++ } }
             }
             $successRate = if (($successCount + $failCount) -gt 0) { [double]$successCount / ($successCount + $failCount) } elseif ($targetRes.PingResult -ne "Timeout") { 1.0 } else { 0.0 }
+            $targetKey = if ($targetUrlMap[$targetRes.Name]) { ([uri]$targetUrlMap[$targetRes.Name]).Host } else { $targetRes.PingTarget }
+            if (-not $targetKey) { $targetKey = $targetRes.Name }
+            if (-not $stateTable.ContainsKey($targetKey)) {
+                $stateTable[$targetKey] = @{
+                    success_history = @()
+                    fail_history = @()
+                    rtt_history = @()
+                    rtt_trend = "unknown"
+                    last_strategy = ""
+                    protocol_class = (Get-ProtocolClass -TargetKey $targetKey)
+                    deny_strategies = @()
+                    stage = "candidate"
+                }
+                $reasonCodes += "UNKNOWN_DEST_BASELINE"
+            }
+            $destState = $stateTable[$targetKey]
+            if ($successRate -ge 0.5) { $destState.success_history += (Get-Date -Format s) } else { $destState.fail_history += (Get-Date -Format s) }
+            if ($targetRes.PingResult -match "(\d+)") { $destState.rtt_history += [int]$matches[1] }
+            $destState.rtt_history = @($destState.rtt_history | Select-Object -Last 8)
+            $destState.rtt_trend = Get-RttTrend -History $destState.rtt_history
+            $destState.last_strategy = $res.Config
+            $recentFailCount = @($destState.fail_history | Select-Object -Last 3).Count
+            if ($recentFailCount -ge 2 -and ($targetRes.HttpTokens -join ' ' -match 'SSL|ERR|LIKELY_BLOCKED')) {
+                $reasonCodes += "DPI_SIGNATURE_PROMOTE_STRONGER"
+            }
+            if (@($destState.success_history | Select-Object -Last 4).Count -ge 4) {
+                $reasonCodes += "STABLE_SUCCESS_DECAY_MILDER"
+            }
+            if ($destState.rtt_trend -eq 'degrading' -or $successRate -lt 0.5) {
+                if ($destState.deny_strategies -notcontains $res.Config) { $destState.deny_strategies += $res.Config; $reasonCodes += "NEGATIVE_LEARNING_DENYLIST" }
+            }
+            Update-StagedIpset -Host $targetKey -SuccessRate $successRate
+            $destState.stage = if ($successRate -ge 0.9) { "stable" } elseif ($successRate -ge 0.5) { "probation" } else { "candidate" }
+            $stateTable[$targetKey] = $destState
             $record = [ordered]@{
                 ts = (Get-Date).ToString("o")
                 run_id = $runId
@@ -1048,10 +1119,13 @@ try {
                 multi_objective_score = $autotuneCandidates[$res.Config].quick_score
                 shortlist_topk = @($shortlisted | ForEach-Object { $_.config })
                 bandit_pick = if ($banditPick) { $banditPick.config } else { $null }
+                reason_codes = @($reasonCodes | Select-Object -Unique)
             }
             ($record | ConvertTo-Json -Compress) | Add-Content -Path $telemetryFile -Encoding UTF8
         }
     }
+    Save-StateTable -Table $stateTable
+    "last_best=$bestConfig`r`nreason_codes=$((@($reasonCodes | Select-Object -Unique)) -join ',')" | Out-File $reasonCodeFile -Encoding ASCII
 
     Write-Host "Results saved to $resultFile" -ForegroundColor Green
     Write-Host "Telemetry saved to $telemetryFile" -ForegroundColor Green
