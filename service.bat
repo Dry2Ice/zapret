@@ -27,6 +27,11 @@ if "%~1"=="load_game_filter" (
     exit /b
 )
 
+if "%~1"=="load_realtime_profile" (
+    call :load_realtime_profile
+    exit /b
+)
+
 
 
 if "%~1"=="build_policy_args" (
@@ -97,6 +102,7 @@ echo   :: SETTINGS
 echo      4. Game Filter         [!GameFilterStatus!]
 echo      5. IPSet Filter        [!IPsetStatus!]
 echo      6. Auto-Update Check   [!CheckUpdatesStatus!]
+echo      12. Degradation Thresholds
 echo.
 echo   :: UPDATES
 echo      7. Update IPSet List
@@ -111,7 +117,7 @@ echo   ----------------------------------------
 echo      0. Exit
 echo.
 
-set /p menu_choice=   Select option (0-11): 
+set /p menu_choice=   Select option (0-12): 
 
 if "%menu_choice%"=="1" goto service_install
 if "%menu_choice%"=="2" goto service_remove
@@ -124,6 +130,7 @@ if "%menu_choice%"=="8" goto hosts_update
 if "%menu_choice%"=="9" goto service_check_updates
 if "%menu_choice%"=="10" goto service_diagnostics
 if "%menu_choice%"=="11" goto run_tests
+if "%menu_choice%"=="12" goto degradation_thresholds
 if "%menu_choice%"=="0" exit /b
 goto menu
 
@@ -826,6 +833,46 @@ if not exist "%checkUpdatesFlag%" (
     del /f /q "%checkUpdatesFlag%"
 )
 
+pause
+goto menu
+
+:: REALTIME SAFE PROFILE ==============
+:load_realtime_profile
+set "RealtimeUDPProfile=default"
+if exist "%~dp0utils\realtime_safe.enabled" set "RealtimeUDPProfile=realtime-safe"
+exit /b
+
+:: DEGRADATION THRESHOLDS =============
+:degradation_thresholds
+cls
+set "thresholdFile=%~dp0utils\degradation-thresholds.conf"
+set "MAX_JITTER_MS=45"
+set "MAX_TIMEOUT_RATIO=0.25"
+set "MAX_FAILED_PROBES=3"
+if exist "%thresholdFile%" (
+    for /f "tokens=1,2 delims==" %%A in (%thresholdFile%) do (
+        if /i "%%A"=="MAX_JITTER_MS" set "MAX_JITTER_MS=%%B"
+        if /i "%%A"=="MAX_TIMEOUT_RATIO" set "MAX_TIMEOUT_RATIO=%%B"
+        if /i "%%A"=="MAX_FAILED_PROBES" set "MAX_FAILED_PROBES=%%B"
+    )
+)
+echo Current thresholds:
+echo   1. max jitter ms     = %MAX_JITTER_MS%
+echo   2. max timeout ratio = %MAX_TIMEOUT_RATIO%
+echo   3. max failed probes = %MAX_FAILED_PROBES%
+echo.
+set /p "MAX_JITTER_MS=Enter max jitter ms (default 45): "
+if "%MAX_JITTER_MS%"=="" set "MAX_JITTER_MS=45"
+set /p "MAX_TIMEOUT_RATIO=Enter max timeout ratio 0..1 (default 0.25): "
+if "%MAX_TIMEOUT_RATIO%"=="" set "MAX_TIMEOUT_RATIO=0.25"
+set /p "MAX_FAILED_PROBES=Enter max failed probes (default 3): "
+if "%MAX_FAILED_PROBES%"=="" set "MAX_FAILED_PROBES=3"
+(
+    echo MAX_JITTER_MS=%MAX_JITTER_MS%
+    echo MAX_TIMEOUT_RATIO=%MAX_TIMEOUT_RATIO%
+    echo MAX_FAILED_PROBES=%MAX_FAILED_PROBES%
+)>"%thresholdFile%"
+echo Thresholds saved to %thresholdFile%
 pause
 goto menu
 

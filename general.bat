@@ -7,6 +7,25 @@ call service.bat status_zapret
 call service.bat check_updates
 call service.bat load_game_filter
 call service.bat load_user_lists
+call service.bat load_realtime_profile
+
+set "GameFilterUDPVoice=%GameFilterUDP%"
+set "GameFilterUDPGame=%GameFilterUDP%"
+set "GameFilterUDPVideo=%GameFilterUDP%"
+set "UDPVoiceRepeats=4"
+set "UDPVoiceCutoff=n2"
+set "UDPGameRepeats=6"
+set "UDPGameCutoff=n2"
+set "UDPGameFakeLimit=8/s"
+set "UDPVideoRepeats=5"
+set "UDPVideoCutoff=n2"
+if /I "%RealtimeUDPProfile%"=="realtime-safe" (
+    set "UDPVoiceRepeats=2"
+    set "UDPGameRepeats=3"
+    set "UDPGameCutoff=n1"
+    set "UDPGameFakeLimit=3/s"
+    set "UDPVideoRepeats=2"
+)
 echo:
 
 set "BIN=%~dp0bin\"
