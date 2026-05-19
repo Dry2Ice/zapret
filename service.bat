@@ -27,6 +27,27 @@ if "%~1"=="load_game_filter" (
     exit /b
 )
 
+
+
+if "%~1"=="build_policy_args" (
+    call :build_policy_args
+    exit /b
+)
+
+:: BUILD POLICY ARGS ==================
+:build_policy_args
+setlocal DisableDelayedExpansion
+set "POLICY_JSON=%~dp0lists\policy-profiles.json"
+set "POLICY_CACHE=%~dp0utils\runtime-policy-cache.json"
+
+if not exist "%POLICY_CACHE%" (
+    > "%POLICY_CACHE%" echo {"version":1,"classes":{}}
+)
+
+for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $profiles = Get-Content -Raw -Path '%POLICY_JSON%' | ConvertFrom-Json; $cachePath = '%POLICY_CACHE%'; $cache = if (Test-Path $cachePath) { Get-Content -Raw -Path $cachePath | ConvertFrom-Json } else { [pscustomobject]@{ version=1; classes=@{} } }; if (-not $cache.classes) { $cache | Add-Member -NotePropertyName classes -NotePropertyValue @{} -Force }; $ladder=@('none','fake(2)','fake(6)','multisplit'); $threshold=[int]$profiles.failureThreshold; $parts=@(); foreach($prop in $profiles.classes.PSObject.Properties){ $name=$prop.Name; $c=$prop.Value; if(-not ($cache.classes.PSObject.Properties.Name -contains $name)){ $cache.classes | Add-Member -NotePropertyName $name -NotePropertyValue ([pscustomobject]@{ fail_count=0; success_level=''; active_strategy='' }) }; $state=$cache.classes.$name; $state.active_strategy = if($state.active_strategy){$state.active_strategy}else{ if($c.strategy){$c.strategy}else{'none'} }; if([int]$state.fail_count -ge $threshold){ $idx=[Math]::Max(0,$ladder.IndexOf([string]$state.active_strategy)); if($idx -lt ($ladder.Count-1)){ $state.active_strategy=$ladder[$idx+1] }; $state.fail_count=0 }; $parts += $c.filters; switch([string]$state.active_strategy){ 'none' { } 'fake(2)' { $parts += '--dpi-desync=fake'; $parts += '--dpi-desync-repeats=2' } 'fake(6)' { $parts += '--dpi-desync=fake'; $parts += '--dpi-desync-repeats=6' } 'multisplit' { $parts += '--dpi-desync=multisplit'; $parts += '--dpi-desync-split-pos=' + ($(if($c.splitPos){$c.splitPos}else{1})); $parts += '--dpi-desync-split-seqovl=' + ($(if($c.splitSeqovl){$c.splitSeqovl}else{568})); if($c.splitPattern){$parts += '--dpi-desync-split-seqovl-pattern="' + $c.splitPattern + '"'} } }; if($c.fakeQuic -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-fake-quic="' + $c.fakeQuic + '"' }; if($c.fakeDiscord -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-fake-discord="' + $c.fakeDiscord + '"' }; if($c.fakeStun -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-fake-stun="' + $c.fakeStun + '"' }; if($c.fakeUnknownUdp -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-fake-unknown-udp="' + $c.fakeUnknownUdp + '"' }; if($c.anyProtocol -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-any-protocol=' + $c.anyProtocol }; if($c.cutoff -and [string]$state.active_strategy -ne 'none'){ $parts += '--dpi-desync-cutoff=' + $c.cutoff }; $parts += '--new'; $state.success_level = $state.active_strategy }; $json = $cache | ConvertTo-Json -Depth 8; Set-Content -Path $cachePath -Value $json -Encoding UTF8; if($parts.Count -gt 0 -and $parts[-1] -eq '--new'){ $parts = $parts[0..($parts.Count-2)] }; [Console]::Out.WriteLine(($parts -join ' '))"`) do set "POLICY_ARGS=%%A"
+
+endlocal & set "POLICY_ARGS=%POLICY_ARGS%"
+exit /b
 if "%~1"=="load_user_lists" (
     call :load_user_lists
     exit /b
