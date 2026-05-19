@@ -9,6 +9,8 @@ if (-not (Test-Path $resultsDir)) { New-Item -ItemType Directory -Path $resultsD
 $autotunerModule = Join-Path $utilsDir "autotuner.psm1"
 if (Test-Path $autotunerModule) { Import-Module $autotunerModule -Force }
 $telemetryFile = Join-Path $resultsDir "autotuner_telemetry.jsonl"
+$degradationFile = Join-Path $utilsDir "degradation-thresholds.conf"
+$realtimeSafeFlag = Join-Path $utilsDir "realtime_safe.enabled"
 
 
 # Define functions early
@@ -52,6 +54,20 @@ trap {
 }
 
 function New-OrderedDict { New-Object System.Collections.Specialized.OrderedDictionary }
+function Get-DegradationThresholds {
+    $defaults = @{ MAX_JITTER_MS = 45.0; MAX_TIMEOUT_RATIO = 0.25; MAX_FAILED_PROBES = 3 }
+    if (-not (Test-Path $degradationFile)) { return $defaults }
+    foreach ($line in Get-Content $degradationFile) {
+        if ($line -match '^\s*([^=]+)=(.+)\s*$') {
+            $k = $matches[1].Trim()
+            $v = $matches[2].Trim()
+            if ($k -eq 'MAX_JITTER_MS') { $defaults.MAX_JITTER_MS = [double]$v }
+            if ($k -eq 'MAX_TIMEOUT_RATIO') { $defaults.MAX_TIMEOUT_RATIO = [double]$v }
+            if ($k -eq 'MAX_FAILED_PROBES') { $defaults.MAX_FAILED_PROBES = [int]$v }
+        }
+    }
+    return $defaults
+}
 function Add-OrSet {
     param($dict, $key, $val)
     if ($dict.Contains($key)) { $dict[$key] = $val } else { $dict.Add($key, $val) }
@@ -917,6 +933,37 @@ try {
     Write-Host "Autotuner shortlist: $((@($shortlisted | ForEach-Object { $_.config })) -join ", ")" -ForegroundColor Cyan
     Write-Host ""
 
+    $thresholds = Get-DegradationThresholds
+    $latencies = @()
+    $timeoutCount = 0
+    $probeCount = 0
+    foreach ($res in $globalResults | Where-Object { $_.Type -eq 'standard' }) {
+        foreach ($targetRes in $res.Results) {
+            $probeCount++
+            if ($targetRes.PingResult -match '(\d+)\s*ms') {
+                $latencies += [double]$matches[1]
+            } else {
+                $timeoutCount++
+            }
+        }
+    }
+    $failedProbes = 0
+    foreach ($res in $globalResults | Where-Object { $_.Type -eq 'dpi' }) {
+        foreach ($targetRes in $res.Results) {
+            foreach ($line in $targetRes.Lines) {
+                if ($line.Status -match 'FAIL|LIKELY_BLOCKED') { $failedProbes++ }
+            }
+        }
+    }
+    $avg = if ($latencies.Count) { ($latencies | Measure-Object -Average).Average } else { 0 }
+    $jitter = if ($latencies.Count -gt 1) { ($latencies | ForEach-Object { [math]::Abs($_ - $avg) } | Measure-Object -Average).Average } else { 0 }
+    $timeoutRatio = if ($probeCount -gt 0) { [double]$timeoutCount / $probeCount } else { 0 }
+    $overloadDetected = ($jitter -gt $thresholds.MAX_JITTER_MS) -or ($timeoutRatio -gt $thresholds.MAX_TIMEOUT_RATIO) -or ($failedProbes -gt $thresholds.MAX_FAILED_PROBES)
+    if ($overloadDetected) {
+        "ENABLED $(Get-Date -Format s)" | Out-File $realtimeSafeFlag -Encoding ASCII
+        Write-Host "[WARN] Overload symptoms detected. realtime-safe profile has been enabled." -ForegroundColor Yellow
+    }
+
     # Save to file
     $dateStr = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
     $resultFile = Join-Path $resultsDir "test_results_$dateStr.txt"
@@ -970,6 +1017,13 @@ try {
     }
 
     Add-Content $resultFile "Best strategy: $bestConfig"
+    Add-Content $resultFile "Overload monitor: jitter=${jitter}ms; timeout_ratio=$timeoutRatio; failed_probes=$failedProbes"
+    Add-Content $resultFile "Thresholds: jitter<=$($thresholds.MAX_JITTER_MS), timeout_ratio<=$($thresholds.MAX_TIMEOUT_RATIO), failed_probes<=$($thresholds.MAX_FAILED_PROBES)"
+    if ($overloadDetected) {
+        Add-Content $resultFile "Recommendation: high overload detected. Narrow filter surface: reduce UDP high-port ranges per app class, trim hostlists/ipsets to only required services, and disable unused profile chains."
+    } else {
+        Add-Content $resultFile "Recommendation: load level acceptable. Keep app-class split and periodically audit unused UDP ranges/lists."
+    }
 
     $runId = [guid]::NewGuid().Guid
     foreach ($res in $globalResults) {
