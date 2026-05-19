@@ -9,9 +9,10 @@ call service.bat load_game_filter
 call service.bat load_user_lists
 call service.bat load_realtime_profile
 
-set "GameFilterUDPVoice=%GameFilterUDP%"
-set "GameFilterUDPGame=%GameFilterUDP%"
-set "GameFilterUDPVideo=%GameFilterUDP%"
+set "GameFilterUDPVoice=19302-19310,50000-50100"
+set "GameFilterUDPGame=27000-27050,7000-9000"
+set "GameFilterUDPVideo=8008,8080"
+if defined GameFilterUDP set "GameFilterUDPGame=%GameFilterUDP%"
 set "UDPVoiceRepeats=4"
 set "UDPVoiceCutoff=n2"
 set "UDPGameRepeats=6"
