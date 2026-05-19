@@ -51,12 +51,39 @@ goto main
 setlocal DisableDelayedExpansion
 set "POLICY_JSON=%~dp0lists\policy-profiles.json"
 set "POLICY_CACHE=%~dp0utils\runtime-policy-cache.json"
+set "POLICY_LOG=%~dp0utils\policy-last.log"
+set "POLICY_ARGS="
 
 if not exist "%POLICY_CACHE%" (
     > "%POLICY_CACHE%" echo {"version":1,"classes":{}}
 )
 
 for /f "usebackq delims=" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0utils\build-policy-args.ps1" -PolicyJson "%POLICY_JSON%" -PolicyCache "%POLICY_CACHE%"`) do set "POLICY_ARGS=%%A"
+
+set "POLICY_BUILD_ERROR="
+if not defined POLICY_ARGS set "POLICY_BUILD_ERROR=1"
+if "%POLICY_ARGS%"=="""" set "POLICY_BUILD_ERROR=1"
+echo %POLICY_ARGS% | findstr /I /C:"--wf-tcp" >nul && set "POLICY_BUILD_ERROR=1"
+echo %POLICY_ARGS% | findstr /I /C:"--wf-udp" >nul && set "POLICY_BUILD_ERROR=1"
+echo %POLICY_ARGS% | findstr /I /C:"--filter-tcp=80,443" >nul && set "POLICY_BUILD_ERROR=1"
+echo %POLICY_ARGS% | findstr /I /C:"--hostlist=" >nul && set "POLICY_BUILD_ERROR=1"
+echo %POLICY_ARGS% | findstr /I /C:"--hostlist-exclude=" >nul && set "POLICY_BUILD_ERROR=1"
+echo %POLICY_ARGS% | findstr /I /C:"--ipset-exclude=" >nul && set "POLICY_BUILD_ERROR=1"
+
+if defined POLICY_BUILD_ERROR (
+    > "%POLICY_LOG%" (
+        echo [ERROR] Invalid/empty POLICY_ARGS
+        echo [TIME] %DATE% %TIME%
+        echo [VALUE] %POLICY_ARGS%
+    )
+    set "POLICY_ARGS="
+) else (
+    > "%POLICY_LOG%" (
+        echo [OK] POLICY_ARGS
+        echo [TIME] %DATE% %TIME%
+        echo [VALUE] %POLICY_ARGS%
+    )
+)
 
 endlocal & set "POLICY_ARGS=%POLICY_ARGS%"
 exit /b

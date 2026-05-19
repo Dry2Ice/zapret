@@ -8,6 +8,7 @@ call service.bat check_updates
 call service.bat load_game_filter
 call service.bat load_user_lists
 call service.bat load_realtime_profile
+set "PolicyLayerEnabledFile=%~dp0utils\policy.enabled"
 
 set "GameFilterUDPVoice=%GameFilterUDP%"
 set "GameFilterUDPGame=%GameFilterUDP%"
@@ -34,7 +35,13 @@ cd /d %BIN%
 
 start "zapret: %~n0" /min "%BIN%winws.exe" --wf-tcp=80,443,2053,2083,2087,2096,8443,%GameFilterTCP% --wf-udp=443,19294-19344,50000-50100,%GameFilterUDP% --filter-tcp=80,443 --hostlist="%LISTS%list-general.txt" --hostlist="%LISTS%list-general-user.txt" --hostlist-exclude="%LISTS%list-exclude.txt" --hostlist-exclude="%LISTS%list-exclude-user.txt" --ipset-exclude="%LISTS%ipset-exclude.txt" --ipset-exclude="%LISTS%ipset-exclude-user.txt"
 
-call service.bat build_policy_args
-if defined POLICY_ARGS (
-    start "zapret: policy" /min "%BIN%winws.exe" --wf-tcp=80,443,2053,2083,2087,2096,8443,%GameFilterTCP% --wf-udp=443,19294-19344,50000-50100,%GameFilterUDP% %POLICY_ARGS%
+if exist "%PolicyLayerEnabledFile%" (
+    call service.bat build_policy_args
+    if defined POLICY_ARGS (
+        start "zapret: policy" /min "%BIN%winws.exe" --wf-tcp=80,443,2053,2083,2087,2096,8443,%GameFilterTCP% --wf-udp=443,19294-19344,50000-50100,%GameFilterUDP% %POLICY_ARGS%
+    ) else (
+        echo [policy-layer] POLICY_ARGS invalid or empty, policy process skipped. See utils\policy-last.log
+    )
+) else (
+    echo [policy-layer] disabled via utils\policy.enabled ^(base strategy only^)
 )
