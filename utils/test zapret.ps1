@@ -61,6 +61,30 @@ trap {
 }
 
 function New-OrderedDict { New-Object System.Collections.Specialized.OrderedDictionary }
+
+function New-CorrelationId { return ([guid]::NewGuid().Guid.Substring(0,8)) }
+function Get-DiagnosticsStatuses {
+    param($allResults)
+    $dnsIssue = $false; $tlsIssue = $false; $udpIssue = $false; $dpiFalsePositive = $false
+    foreach ($res in $allResults | Where-Object { $_.Type -eq 'standard' }) {
+        foreach ($targetRes in $res.Results) {
+            $tokens = @($targetRes.HttpTokens)
+            if (($tokens -join ' ') -match 'SSL') { $dnsIssue = $true; $tlsIssue = $true }
+            if ($targetRes.PingResult -eq 'Timeout') { $udpIssue = $true }
+        }
+    }
+    foreach ($res in $allResults | Where-Object { $_.Type -eq 'dpi' }) {
+        $blocked = 0; $ok = 0
+        foreach ($targetRes in $res.Results) { foreach ($line in $targetRes.Lines) { if ($line.Status -eq 'LIKELY_BLOCKED') { $blocked++ }; if ($line.Status -eq 'OK') { $ok++ } } }
+        if ($blocked -gt 0 -and $ok -gt $blocked) { $dpiFalsePositive = $true }
+    }
+    return [ordered]@{
+        dns_path_issue = $(if($dnsIssue){'detected'}else{'clear'})
+        tls_handshake_anomaly = $(if($tlsIssue){'detected'}else{'clear'})
+        udp_impairment = $(if($udpIssue){'detected'}else{'clear'})
+        probable_dpi_false_positive = $(if($dpiFalsePositive){'detected'}else{'clear'})
+    }
+}
 function Get-DegradationThresholds {
     $defaults = @{ MAX_JITTER_MS = 45.0; MAX_TIMEOUT_RATIO = 0.25; MAX_FAILED_PROBES = 3 }
     if (-not (Test-Path $degradationFile)) { return $defaults }
@@ -1002,7 +1026,12 @@ try {
 
     # Save to file
     $dateStr = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-    $resultFile = Join-Path $resultsDir "test_results_$dateStr.txt"
+    $runCorrelationId = New-CorrelationId
+    $resultStem = "test_results_${dateStr}_corr-${runCorrelationId}"
+    $resultFile = Join-Path $resultsDir ("$resultStem.txt")
+    $jsonlFile = Join-Path $resultsDir ("$resultStem.jsonl")
+    $summaryCsv = Join-Path $resultsDir ("$resultStem.summary.csv")
+    $diffFile = Join-Path $resultsDir ("$resultStem.diff.csv")
     # Clear file
     "" | Out-File $resultFile -Encoding UTF8
     foreach ($res in $globalResults) {
@@ -1041,8 +1070,45 @@ try {
         Add-Content $resultFile ""
     }
 
+    # Standardized per-probe logs (jsonl) + summary csv
+    $jsonlRows = @()
+    $summaryRows = @()
+    foreach ($res in $globalResults) {
+        foreach ($targetRes in $res.Results) {
+            $outcome = 'ok'; $timeout = $false; $rtt = -1; $up = 0; $down = 0
+            if ($targetRes.PingResult -eq 'Timeout') { $timeout = $true; $outcome = 'timeout' }
+            if ($targetRes.PingResult -match '(\d+)\s*ms') { $rtt = [int]$matches[1] }
+            if ($res.Type -eq 'standard' -and (($targetRes.HttpTokens -join ' ') -match 'ERROR|SSL')) { $outcome = 'error' }
+            if ($res.Type -eq 'dpi') {
+                foreach ($line in $targetRes.Lines) { $up += [double]$line.UpKB * 1024; $down += [double]$line.DownKB * 1024; if ($line.Status -match 'FAIL|LIKELY_BLOCKED') { $outcome = 'error' } }
+            }
+            $row = [ordered]@{ ts=(Get-Date).ToString('o'); strategy_id=$res.Config; correlation_id=$runCorrelationId; test_type=$res.Type; target=$targetRes.Name; outcome=$outcome; rtt_ms=$rtt; timeout=$timeout; bytes_up=[int64]$up; bytes_down=[int64]$down }
+            $jsonlRows += ,$row
+            $summaryRows += [PSCustomObject]$row
+        }
+    }
+    foreach ($r in $jsonlRows) { ($r | ConvertTo-Json -Compress) | Add-Content -Path $jsonlFile -Encoding UTF8 }
+    $summaryRows | Export-Csv -Path $summaryCsv -NoTypeInformation -Encoding UTF8
+
+    $prevSummary = Get-ChildItem -Path $resultsDir -Filter '*.summary.csv' | Where-Object { $_.FullName -ne $summaryCsv } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($prevSummary) {
+        $prev = Import-Csv $prevSummary.FullName
+        $curr = Import-Csv $summaryCsv
+        $prevAgg = @{}; $currAgg = @{}
+        foreach ($r in $prev) { if(-not $prevAgg.ContainsKey($r.strategy_id)){$prevAgg[$r.strategy_id]=0}; if($r.outcome -eq 'ok'){$prevAgg[$r.strategy_id]++} }
+        foreach ($r in $curr) { if(-not $currAgg.ContainsKey($r.strategy_id)){$currAgg[$r.strategy_id]=0}; if($r.outcome -eq 'ok'){$currAgg[$r.strategy_id]++} }
+        $diffRows = @()
+        foreach ($k in ($currAgg.Keys + $prevAgg.Keys | Sort-Object -Unique)) {
+            $before = if($prevAgg.ContainsKey($k)){$prevAgg[$k]}else{0}; $after = if($currAgg.ContainsKey($k)){$currAgg[$k]}else{0}
+            $diffRows += [PSCustomObject]@{ strategy_id=$k; ok_before=$before; ok_after=$after; ok_delta=($after-$before) }
+        }
+        $diffRows | Export-Csv -Path $diffFile -NoTypeInformation -Encoding UTF8
+    }
+
     # Add analytics
     Add-Content $resultFile "=== ANALYTICS ==="
+    $diagStatuses = Get-DiagnosticsStatuses -allResults $globalResults
+    Add-Content $resultFile "Diagnostics: DNS path issue=$($diagStatuses.dns_path_issue); TLS handshake anomaly=$($diagStatuses.tls_handshake_anomaly); UDP impairment=$($diagStatuses.udp_impairment); probable DPI false positive=$($diagStatuses.probable_dpi_false_positive)"
     foreach ($config in $analytics.Keys) {
         $a = $analytics[$config]
         if ($a.ContainsKey('PingOK')) {
@@ -1127,7 +1193,17 @@ try {
     Save-StateTable -Table $stateTable
     "last_best=$bestConfig`r`nreason_codes=$((@($reasonCodes | Select-Object -Unique)) -join ',')" | Out-File $reasonCodeFile -Encoding ASCII
 
+    $bundleDir = Join-Path $resultsDir ("repro_bundle_${dateStr}_corr-${runCorrelationId}")
+    if (-not (Test-Path $bundleDir)) { New-Item -ItemType Directory -Path $bundleDir | Out-Null }
+    Copy-Item $resultFile,$jsonlFile,$summaryCsv -Destination $bundleDir -Force
+    if (Test-Path $targetsFile) { Copy-Item $targetsFile -Destination $bundleDir -Force }
+    foreach ($f in $batFiles) { Copy-Item $f.FullName -Destination $bundleDir -Force }
+
     Write-Host "Results saved to $resultFile" -ForegroundColor Green
+    Write-Host "JSONL saved to $jsonlFile" -ForegroundColor Green
+    Write-Host "CSV summary saved to $summaryCsv" -ForegroundColor Green
+    if (Test-Path $diffFile) { Write-Host "Diff report saved to $diffFile" -ForegroundColor Green }
+    Write-Host "Repro bundle saved to $bundleDir" -ForegroundColor Green
     Write-Host "Telemetry saved to $telemetryFile" -ForegroundColor Green
 
 } catch {
