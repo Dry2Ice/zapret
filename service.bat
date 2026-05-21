@@ -66,8 +66,6 @@ if "%POLICY_ARGS%"=="""" set "POLICY_BUILD_ERROR=1"
 if not defined POLICY_BUILD_ERROR (
     echo(%POLICY_ARGS%| findstr /R "[^ ]" >nul || set "POLICY_BUILD_ERROR=1"
 )
-echo %POLICY_ARGS% | findstr /I /C:"--wf-tcp" >nul && set "POLICY_BUILD_ERROR=1"
-echo %POLICY_ARGS% | findstr /I /C:"--wf-udp" >nul && set "POLICY_BUILD_ERROR=1"
 
 if defined POLICY_BUILD_ERROR (
     > "%POLICY_LOG%" (

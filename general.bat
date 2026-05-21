@@ -75,5 +75,4 @@ if exist "%PolicyLayerEnabledFile%" (
     echo [policy-layer] disabled via utils\policy.enabled ^(base strategy only^)
 )
 
-
 echo [INFO] For best results, configure encrypted DNS (DoH/DoT) in your browser or Windows settings.
